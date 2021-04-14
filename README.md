@@ -8,7 +8,7 @@ This repo is used for practicing mini projects
 Test on prebuilt enviroment with GitPod. More infomation about [Gitpod](https://gitpod.io/)
 
 ### Test on your linux machine
-Requirement:
+Requirement libs:
 - jasson
 - libjwt
 - libcurl
@@ -16,6 +16,10 @@ Requirement:
 - cmake
 - autotools-dev
 
+```bash
+chmod +x ./libs.sh
+./libs.sh
+```
 ## Build
 ```bash
 mkdir build 
