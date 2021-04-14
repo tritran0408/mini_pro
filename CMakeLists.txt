@@ -6,7 +6,7 @@ if(COMMAND cmake_policy)
       cmake_policy(SET CMP0003 NEW)
     endif(COMMAND cmake_policy)
 # add the executable
-add_executable(Server hellobrowser.c)
+add_executable(Server server.c)
 FIND_LIBRARY(MICROHTTPD_LIB microhttpd)
 FIND_LIBRARY(PTHREAD_LIB pthread)
 FIND_LIBRARY(LIBJWT_LIBRARIES jwt)
