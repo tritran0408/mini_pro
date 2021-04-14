@@ -68,7 +68,7 @@ send_page (struct MHD_Connection *connection, const char *page, int err_code)
   printf("Return code: %d\n", err_code);
   response =
     MHD_create_response_from_buffer (strlen (page), (void *) page,
-                                     MHD_RESPMEM_PERSISTENT);
+                                      MHD_RESPMEM_PERSISTENT);
   if (! response)
     return MHD_NO;
 
@@ -92,31 +92,6 @@ get_cookie (void *cls, enum MHD_ValueKind kind, const char *key,
   // printf ("%s: %s\n", key, value);
   return MHD_YES;
 }
-
-
-// static void
-// request_completed (void *cls, struct MHD_Connection *connection,
-//                    void **con_cls, enum MHD_RequestTerminationCode toe)
-// {
-//   struct connection_info_struct *con_info = *con_cls;
-//   (void) cls;         /* Unused. Silent compiler warning. */
-//   (void) connection;  /* Unused. Silent compiler warning. */
-//   (void) toe;         /* Unused. Silent compiler warning. */
-
-//   if (NULL == con_info)
-//     return;
-
-//   if (con_info->connectiontype == POST)
-//   {
-//     MHD_destroy_post_processor (con_info->postprocessor);
-//     if (con_info->answerstring)
-//       free (con_info->answerstring);
-//   }
-
-//   free (con_info);
-//   *con_cls = NULL;
-// }
-
 
 static enum MHD_Result
 answer_to_connection (void *cls, struct MHD_Connection *connection,
@@ -145,34 +120,43 @@ answer_to_connection (void *cls, struct MHD_Connection *connection,
   if(NULL == cookie->token)
   {
     printf("No token\n");
-    return send_page (connection, errorpage, MHD_HTTP_UNAUTHORIZED);
+    ret = send_page (connection, errorpage, MHD_HTTP_UNAUTHORIZED);
+    goto return_fail_decode;
   }
 
   ret = jwt_decode(&jwt, cookie->token, pub_key->key, pub_key->key_size);
 	if (ret != 0 || jwt == NULL) {
 		// fprintf(stderr, "invalid jwt %s\n", cookie->token);
-		goto return_fail;
+    ret = send_page (connection, errorpage, MHD_HTTP_UNAUTHORIZED);
+		goto return_fail_decode;
 	}
 
 	/* Validate jwt */
 	if (jwt_validate(jwt, jwt_valid) != 0) {
 		// fprintf(stderr, "jwt failed to validate: %08x\n", jwt_valid_get_status(jwt_valid));
 		// jwt_dump_fp(jwt, stderr, 1);
+    ret = send_page (connection, errorpage, MHD_HTTP_UNAUTHORIZED);
 		goto return_fail;
 	}
 
   if (0 == strcmp (method, "POST"))
   {
-    return send_page (connection, greetingpage, MHD_HTTP_OK);
+    ret = send_page (connection, greetingpage, MHD_HTTP_OK);
   }
   if (0 == strcmp (method, "GET"))
   {
-
-    return send_page (connection, greetingpage, MHD_HTTP_BAD_REQUEST);
+    ret = send_page (connection, greetingpage, MHD_HTTP_BAD_REQUEST);
   }
 
 return_fail:
-  return send_page (connection, errorpage, MHD_HTTP_UNAUTHORIZED);
+  jwt_free(jwt);
+return_fail_decode:
+  if(NULL != cookie->token)
+  {
+    free(cookie->token);
+  }
+  free(cookie);
+  return ret;
 }
 
 void usage(const char *name)
@@ -186,8 +170,7 @@ void usage(const char *name)
 	exit(0);
 }
 
-int
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
   struct MHD_Daemon *daemon;
   char *opt_key_name = NULL;
@@ -202,10 +185,10 @@ main(int argc, char *argv[])
 	struct option opttbl[] = {
 		{ "help",         no_argument,        NULL, 'h'         },
 		{ "key",          required_argument,  NULL, 'k'         },
-		{ "port",          optional_argument,  NULL, 'p'         },
+		{ "port",         optional_argument,  NULL, 'p'         },
     { "claim",        required_argument,  NULL, 'c'         },
 		{ NULL, 0, 0, 0 },
-	};
+    };
 
   char *k = NULL, *v = NULL;
 	struct kv {
@@ -238,7 +221,7 @@ main(int argc, char *argv[])
 				}
 			}
 			break;
-		default: /* '?' */
+		default:
 			usage(basename(argv[0]));
 			exit(EXIT_FAILURE);
 		}
@@ -254,7 +237,7 @@ main(int argc, char *argv[])
 	jwt_valid_set_headers(jwt_valid, 1);
 	jwt_valid_set_now(jwt_valid, time(NULL));
   for (i = 0; i < claims_count; i++) {
-    printf("Add grant  %s %s\n", opt_claims[i].key, opt_claims[i].val);
+    // printf("Add grant  %s %s\n", opt_claims[i].key, opt_claims[i].val);
 		jwt_valid_add_grant(jwt_valid, opt_claims[i].key, opt_claims[i].val);
 	}
 
@@ -284,8 +267,8 @@ main(int argc, char *argv[])
 
 	pub_key->key_size = fread(pub_key->key, 1, pub_key->key_size, fp_pub_key);
 	fclose(fp_pub_key);
-	fprintf(stderr, "pub key loaded %s (%zu)!\n", opt_key_name, pub_key->key_size);
-
+	// fprintf(stderr, "pub key loaded %s (%zu)!\n", opt_key_name, pub_key->key_size);
+  free(opt_key_name);
   struct certificate_struct *certificate = malloc(sizeof(struct certificate_struct));
   if (NULL == certificate) {
     fprintf(stderr, "Can not allocate memory\n");
@@ -297,13 +280,21 @@ main(int argc, char *argv[])
                              port, NULL, NULL,
                              &answer_to_connection, certificate,
                              // Notify when request is 
-                            //  MHD_OPTION_NOTIFY_COMPLETED, request_completed,
+                             // MHD_OPTION_NOTIFY_COMPLETED, request_completed,
                              NULL, MHD_OPTION_END);
   if (NULL == daemon)
     return 1;
 
   (void) getchar ();
-
+  
+  free(certificate);
+  for (i = 0; i < claims_count; i++) {
+    free(opt_claims[i].key);
+    free(opt_claims[i].val);
+	}
+  free(pub_key->key);
+  free(pub_key);
+  jwt_valid_free(jwt_valid);
   MHD_stop_daemon (daemon);
 
   return 0;
