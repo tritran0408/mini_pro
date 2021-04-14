@@ -1,24 +1,3 @@
-/***************************************************************************
- *                                  _   _ ____  _
- *  Project                     ___| | | |  _ \| |
- *                             / __| | | | |_) | |
- *                            | (__| |_| |  _ <| |___
- *                             \___|\___/|_| \_\_____|
- *
- * Copyright (C) 1998 - 2020, Daniel Stenberg, <daniel@haxx.se>, et al.
- *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution. The terms
- * are also available at https://curl.se/docs/copyright.html.
- *
- * You may opt to use, copy, modify, merge, publish, distribute and/or sell
- * copies of the Software, and permit persons to whom the Software is
- * furnished to do so, under the terms of the COPYING file.
- *
- * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
- * KIND, either express or implied.
- *
- ***************************************************************************/
 /* <DESC>
  * simple HTTP POST using the easy interface
  * </DESC>
@@ -34,10 +13,6 @@
 #include <stdarg.h>
 #include <unistd.h>
 
-const char *COOKIE ="Cookie: token=";
-char *opt_host = "localhost";
-int opt_port = 8888;
-
 struct token_struct {
   char *token;
   size_t token_len;
@@ -47,6 +22,11 @@ struct thread_info {
   struct token_struct *token;
   int thread_id;
 };
+
+const char *COOKIE ="Cookie: token=";
+char *opt_host = "localhost";
+int opt_port = 8888;
+int is_exist = 0;
 
 void usage(const char *name) {
 	/* TODO Might want to support JWT input via stdin */
@@ -61,14 +41,18 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp) {
 }
 
 char *cookie_generate(struct token_struct *token) {
-  size_t cookie_len = (strlen(COOKIE) + token->token_len);
+  size_t cookie_len = (strlen(COOKIE) + token->token_len + 1);
+  printf("cookie_len: %d token_len %d\n", strlen(COOKIE), token->token_len);
   char *cookie = malloc(sizeof(char) * cookie_len);
   if (NULL == cookie) {
     fprintf(stderr, "Can not allocate memory\n");
 		exit(EXIT_FAILURE);
   }
   sprintf (cookie, "%s%s", COOKIE, token->token);
-  // printf("%s\n", cookie);
+  printf("%s\n", cookie);
+  cookie[cookie_len - 1] = '\0';
+  printf("%s\n", cookie);
+
   return cookie;
 }
 
@@ -82,7 +66,7 @@ int load_token_file(struct token_struct *token, char *file_name) {
 		exit(EXIT_FAILURE);
   }
   fseek(fp_token_file, 0L, SEEK_END);
-  token->token_len = ftell(fp_token_file);
+  token->token_len = ftell(fp_token_file) + 1;
   fseek(fp_token_file, 0L, SEEK_SET);
   token->token = malloc(sizeof(unsigned char) * token->token_len);
 
@@ -93,6 +77,7 @@ int load_token_file(struct token_struct *token, char *file_name) {
 
 	token->token_len = fread(token->token, 1, token->token_len, fp_token_file);
 	fclose(fp_token_file);
+  token->token[token->token_len] = '\0';
 	fprintf(stderr, "token file loaded %s (%zu)!\n", file_name, token->token_len);
 }
 
@@ -105,11 +90,12 @@ void *curl_post_request( void *ptr ) {
   struct token_struct *opt_tokens = thread_info->token;
   thread_id = thread_info->thread_id;
   /* get a curl handle */
-  while(1) {
+  while(!is_exist) {
     curl = curl_easy_init();
     if(curl) {
       struct curl_slist *chunk = NULL;
-      chunk = curl_slist_append(chunk, cookie_generate(opt_tokens));
+      char *cookie = cookie_generate(opt_tokens);
+      chunk = curl_slist_append(chunk, cookie);
       // chunk = curl_slist_append(chunk, "Cookie: token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE2MTc4MDQ2ODAsImlzcyI6ImV4YW1wbGUuY29tIiwic3ViIjoidXNlcjAifQ.U297hsZ9Xmz2LDtmLuqaysx-MbOLip9TOojgjteiPbpQT3eRLQmE55IvYaRqtVXFbrOkUkhnn_ysAV_ltmW9TSFIKddtIP32yJUXzm7JtY4kL_On-9W0YepTkCxbiemrNIUHhLFY08UCXyw1zUyvsyIcAWgbrBE5kp4rACP5FZHS2fecPUUtLmJRWehlaQHqdaMC9FKcn2QOxpaWS4AhmWUBdA17l3GuSYC1glsVxF0Jx_WZ6Ot-K8vmnvpBVxaRXLTqKAK_roveC51Pcs5xz_BBcVuNTKWEt6OXuFCYWzyuY6BlmCO7QkOAeTSCLthypmF0PdEnBtODomTWkBLMxQ");
       /* First set the URL that is about to receive our POST. This URL can
         just as well be a https:// URL if that is what should receive the
@@ -137,33 +123,33 @@ void *curl_post_request( void *ptr ) {
             printf("[Thread %d] - Server accepted. HTTP code: 200.\n", thread_info->thread_id);
           }
         }
+      free(cookie);
       /* always cleanup */
       curl_easy_cleanup(curl);
       /* free the custom headers */
       curl_slist_free_all(chunk);
     }
-    sleep(2);
+    sleep(30);
   }
+  return NULL;
 }
 
 int main(int argc, char *argv[]) {
 
   int token_count = 0;
   int oc = 0;
-  
-  
   int response_code;
 
   int opt_thread_count = 5;
   pthread_t *threads;
   int thread_ret;
   struct thread_info *thread_infos;
-  char *optstr = "hc:p:H:t:";
+  char *optstr = "hc:p:H:t:n:";
 	struct option opttbl[] = {
 		{ "help",         no_argument,        NULL, 'h'         },
     { "host",         no_argument,        NULL, 'H'         },
     { "port",         no_argument,        NULL, 'p'         },
-    { "number",         no_argument,        NULL, 'n'         },
+    { "number",       no_argument,        NULL, 'n'         },
 		{ "token",        required_argument,  NULL, 't'         },
 		{ NULL, 0, 0, 0 },
 	};
@@ -218,8 +204,14 @@ int main(int argc, char *argv[]) {
     thread_ret = pthread_create( &threads[i], NULL, curl_post_request, (void*) &thread_infos[i]);
   }
   getchar();
+  is_exist = 1;
   for(int i = 0; i < opt_thread_count; i++) {
     pthread_join(threads[i], NULL );
+  }
+  free(threads);
+  free(thread_infos);
+  for(int i = 0; i < token_count; i++) {
+    free(opt_tokens[i].token);
   }
   curl_global_cleanup();
   return 0;
